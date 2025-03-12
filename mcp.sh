@@ -34,31 +34,15 @@ function get_server_capabilities() {
   "authType": "$SERVER_AUTH_TYPE",
   "methods": {
     "speak": {
-      "description": "Convert text to speech using OpenAI's TTS API",
+      "description": "Say something out loud. Use it to attract the user's attention when you're done with a task, need help, or just want to say something.",
       "parameters": {
         "text": {
           "type": "string",
           "description": "The text to convert to speech",
           "required": true
-        },
-        "voice": {
-          "type": "string",
-          "description": "Voice model to use (default: onyx)",
-          "enum": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
-          "required": false
-        },
-        "speed": {
-          "type": "number",
-          "description": "Speech speed (default: 1.0)",
-          "required": false
-        },
-        "model": {
-          "type": "string",
-          "description": "TTS model to use (default: tts-1)",
-          "enum": ["tts-1", "tts-1-hd"],
-          "required": false
         }
-      }
+      },
+      "notes": "Other settings (voice, speed, model) should be configured via environment variables: SPEECH_VOICE, SPEECH_SPEED, and SPEECH_MODEL"
     }
   }
 }
@@ -87,11 +71,13 @@ function handle_speak() {
     local id="$1"
     local params="$2"
     
-    # Extract parameters using jq
+    # Extract text parameter using jq
     local text=$(echo "$params" | jq -r '.text // ""')
-    local voice=$(echo "$params" | jq -r '.voice // "onyx"')
-    local speed=$(echo "$params" | jq -r '.speed // 1.0')
-    local model=$(echo "$params" | jq -r '.model // "tts-1"')
+    
+    # Get other parameters from environment variables with defaults
+    local voice="${SPEECH_VOICE:-onyx}"
+    local speed="${SPEECH_SPEED:-1.0}"
+    local model="${SPEECH_MODEL:-tts-1}"
     
     # Validate required parameters
     if [[ -z "$text" ]]; then
