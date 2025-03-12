@@ -18,7 +18,7 @@ A powerful command-line utility for text-to-speech conversion using OpenAI's API
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/speech.sh.git
+   git clone https://github.com/j3k0/speech.sh.git
    cd speech.sh
    ```
 
