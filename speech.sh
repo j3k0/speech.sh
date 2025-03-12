@@ -15,6 +15,7 @@ VERBOSE="F"
 MODEL="tts-1"  # Make model configurable
 MAX_RETRIES="3"  # Maximum number of retry attempts for API calls
 TIMEOUT="30"     # Timeout in seconds for API calls
+PLAYER="auto"    # Audio player to use: auto, ffmpeg, or mplayer
 
 # Print usage information
 show_help() {
@@ -35,6 +36,8 @@ Options:
   -V, --verbose       Same as --verbose
   -r, --retries N     Number of retry attempts for API calls (default: 3)
   -T, --timeout N     Timeout in seconds for API calls (default: 30)
+  -p, --player PLAYER Audio player to use: auto, ffmpeg, or mplayer (default: auto)
+                      'auto' will use ffmpeg if available, falling back to mplayer
 
 The API key can be provided in three ways (in order of precedence):
 1. Command-line argument (-a, --api_key)
@@ -68,15 +71,49 @@ log() {
     fi
 }
 
+# Check if the command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
 # Check if required commands exist
 check_dependencies() {
     local missing=0
-    for cmd in curl jq mplayer; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
+    
+    # Check required dependencies
+    for cmd in curl jq; do
+        if ! command_exists "$cmd"; then
             log_err "Required command not found: $cmd"
             missing=1
         fi
     done
+    
+    # Check audio players based on configuration
+    if [[ "$PLAYER" == "auto" ]]; then
+        if command_exists "ffmpeg"; then
+            log "ffmpeg found, using it for audio playback"
+            PLAYER="ffmpeg"
+        elif command_exists "mplayer"; then
+            log "mplayer found, using it for audio playback"
+            PLAYER="mplayer"
+        else
+            log_err "No audio player found. Please install ffmpeg or mplayer."
+            missing=1
+        fi
+    elif [[ "$PLAYER" == "ffmpeg" ]]; then
+        if ! command_exists "ffmpeg"; then
+            log_err "ffmpeg was specified but not found"
+            missing=1
+        fi
+    elif [[ "$PLAYER" == "mplayer" ]]; then
+        if ! command_exists "mplayer"; then
+            log_err "mplayer was specified but not found"
+            missing=1
+        fi
+    else
+        log_err "Invalid player specified: $PLAYER. Valid options are: auto, ffmpeg, mplayer"
+        missing=1
+    fi
     
     if [[ $missing -eq 1 ]]; then
         error_exit "Missing dependencies. Please install the required packages." 2
@@ -150,6 +187,13 @@ parse_arguments() {
                 MODEL="$2"
                 shift 2
                 ;;
+            -p | --player)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                PLAYER="$2"
+                shift 2
+                ;;
             -r | --retries)
                 if [[ -z "${2:-}" ]]; then
                     error_exit "Missing value for parameter: $1"
@@ -180,6 +224,11 @@ parse_arguments() {
         echo "Use -h or --help for usage information" >&2
         exit 0
     fi
+    
+    # Validate PLAYER value
+    if [[ ! "$PLAYER" =~ ^(auto|ffmpeg|mplayer)$ ]]; then
+        error_exit "Invalid player: $PLAYER. Valid values are: auto, ffmpeg, mplayer"
+    fi
 }
 
 # Get API key from available sources
@@ -206,7 +255,7 @@ generate_filename() {
         local temp_dir
         temp_dir="$(dirname "$(mktemp -u)")"
         # Use more secure hash function if available
-        if command -v sha256sum >/dev/null 2>&1; then
+        if command_exists "sha256sum"; then
             FILE="${temp_dir}/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | sha256sum | cut -d" " -f1).mp3"
         else
             FILE="${temp_dir}/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1).mp3"
@@ -321,8 +370,23 @@ generate_speech() {
 
 # Play the audio file
 play_audio() {
-    log "Playing $FILE"
-    mplayer -quiet -really-quiet "$FILE" || error_exit "Failed to play audio file" 6
+    log "Playing $FILE with $PLAYER"
+    
+    if [[ "$PLAYER" == "ffmpeg" ]]; then
+        # Use ffplay from the ffmpeg suite
+        if command_exists "ffplay"; then
+            ffplay -autoexit -nodisp -loglevel quiet "$FILE" </dev/null >/dev/null 2>&1 || error_exit "Failed to play audio file with ffplay" 6
+        else
+            # Fallback to ffmpeg if ffplay is not available
+            log "ffplay not found, using ffmpeg directly"
+            # This only works with audio going to the default output
+            ffmpeg -hide_banner -loglevel quiet -i "$FILE" -f wav - | aplay -q 2>/dev/null || error_exit "Failed to play audio file with ffmpeg" 6
+        fi
+    elif [[ "$PLAYER" == "mplayer" ]]; then
+        mplayer -quiet -really-quiet "$FILE" </dev/null >/dev/null 2>&1 || error_exit "Failed to play audio file with mplayer" 6
+    else
+        error_exit "Unknown player: $PLAYER"
+    fi
 }
 
 # Main function

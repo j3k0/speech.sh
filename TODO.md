@@ -3,5 +3,5 @@
 - [x] Use best practices
 - [x] If --verbose isn't set, the script should output no text at all (or only on stderr)
 - [x] Evaluate and improve external tool usage (curl with retry logic)
-- [ ] Evaluate use of ffmpeg instead of mplayer
+- [x] Evaluate use of ffmpeg instead of mplayer
 - [ ] Evaluate option to make it MCP compatible (add an mcp.sh script, using mcp in stdio mode) -- check MCP server protocol online.
