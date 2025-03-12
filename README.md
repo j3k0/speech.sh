@@ -1,34 +1,148 @@
-# speech.sh
-Simple curl script to play aloud what you type, useful if your voice is suddenly broken.
+# Speech.sh
+
+A powerful command-line utility for text-to-speech conversion using OpenAI's API.
 
 ## Features
-* Hacked in 30 minutes
-* Caching: if asking speech for something that's been spoken before, will play the previous file
 
-## Dependencies
-* curl
-* openai cli, and an API key setup
-* jq
-* mplayer
-* optional: notify-send
+- Convert text to speech with a simple command
+- Multiple voice options (onyx, alloy, echo, fable, nova, shimmer)
+- Adjustable speech speed
+- Support for both tts-1 and tts-1-hd models
+- Flexible API key management (command-line, environment variable, or file)
+- Automatic caching to avoid duplicate API calls
+- Retry mechanism for handling network issues
+- Support for both ffmpeg and mplayer for audio playback
+- MCP (Model Context Protocol) compatibility for integration with AI tools
 
-# Usage
-* `chmod +x speech.sh`
-* Optional: Put your OpenaiAPI key in a file called API_KEY in the same dir as this one or supply it as an argument.
-* `./speech.sh --voice "alloy" --text "This is a test" --speed 1.1 --api_key ****...***`
-* If you want to add an `i3wm` binding: `bindsym $mod+p exec /YOUR/PATH/speech_launcher.sh, mode "default"` with speech_launcher.sh containing this:
+## Installation
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/yourusername/speech.sh.git
+   cd speech.sh
+   ```
+
+2. Make the scripts executable:
+   ```bash
+   chmod +x speech.sh mcp.sh
+   ```
+
+3. Ensure you have the required dependencies:
+   - curl
+   - jq
+   - Either ffmpeg or mplayer (ffmpeg preferred)
+
+## Usage
+
+Basic usage:
+
+```bash
+./speech.sh --text "Hello, world!"
+```
+
+With more options:
+
+```bash
+./speech.sh --text "Hello, world!" --voice nova --speed 1.2 --model tts-1-hd
+```
+
+### Options
 
 ```
-#!/usr/bin/zsh
-OUT=$(i3-input)
-TEXT=$(echo $OUT | tail -n 1 | cut -d'=' -f 2 | cut -c2-)
-API_KEY=$(cat /YOUR/PATH/speech.sh/API_KEY)
-/YOUR/PATH/speech.sh/speech.sh --text "$TEXT" --api_key $API_KEY
+-h, --help          Show help message and exit
+-t, --text TEXT     Text to convert to speech (required)
+-v, --voice VOICE   Voice model to use (default: onyx)
+-s, --speed SPEED   Speech speed (default: 1.0)
+-o, --output FILE   Output file path (default: auto-generated)
+-a, --api_key KEY   OpenAI API key
+-m, --model MODEL   TTS model to use (default: tts-1)
+-p, --player PLAYER Audio player to use: auto, ffmpeg, or mplayer (default: auto)
+    --verbose       Enable verbose logging
+-V, --verbose       Same as --verbose
+-r, --retries N     Number of retry attempts for API calls (default: 3)
+-T, --timeout N     Timeout in seconds for API calls (default: 30)
 ```
 
-# Why ?
-[Ospeak](https://github.com/simonw/ospeak) was too slow because of the python overhead
+### API Key Configuration
 
+The script accepts an OpenAI API key in three ways (in order of precedence):
+1. Command-line argument: `--api_key "your-api-key"`
+2. Environment variable: `export OPENAI_API_KEY="your-api-key"`
+3. A file named `API_KEY` in the script's directory
 
-# Related project
-* [quick_whisper_type.py](https://github.com/thiswillbeyourgithub/Quick-Whisper-Typer): *Minimalist python script to turn your voice into typed text (works anywhere)*
+## Advanced Features
+
+### Auto-caching
+
+The script caches audio files by default to avoid unnecessary API calls. 
+If you request the same text with the same voice and speed, it will reuse 
+the previously generated audio file.
+
+### Retry Logic
+
+The script includes sophisticated retry logic for API calls:
+- Automatically retries failed API calls (default: 3 attempts)
+- Implements exponential backoff
+- Uses native curl retry mechanism when available
+- Configurable timeout values
+
+### Audio Player Options
+
+You can choose your preferred audio player:
+- `--player auto`: Use ffmpeg if available, fall back to mplayer (default)
+- `--player ffmpeg`: Force using ffmpeg
+- `--player mplayer`: Force using mplayer
+
+## MCP Integration
+
+The `mcp.sh` script provides Model Context Protocol compatibility, allowing the 
+text-to-speech functionality to be used by MCP-compatible LLM applications like Claude.
+
+For detailed instructions on using the MCP integration, see [MCP_README.md](MCP_README.md).
+
+## Examples
+
+Convert text to speech with default settings:
+```bash
+./speech.sh --text "Hello, world!"
+```
+
+Use a different voice:
+```bash
+./speech.sh --text "Hello, world!" --voice nova
+```
+
+Adjust the speech speed:
+```bash
+./speech.sh --text "Hello, world!" --speed 1.5
+```
+
+Save to a specific file:
+```bash
+./speech.sh --text "Hello, world!" --output hello.mp3
+```
+
+Use environment variable for API key:
+```bash
+export OPENAI_API_KEY="your-api-key"
+./speech.sh --text "Hello, world!"
+```
+
+## Troubleshooting
+
+If you encounter issues:
+
+1. Enable verbose logging with the `--verbose` flag
+2. Check that your OpenAI API key is valid
+3. Verify that all dependencies are installed
+4. Ensure you have internet connectivity
+5. Check the permissions of the output directory
+
+## Contributors
+
+- Jean-Christophe Hoelt
+- Claude AI (Anthropic)
+
+## License
+
+GPL
