@@ -1,11 +1,18 @@
 #!/bin/zsh
+# speech.sh - Text-to-speech utility using OpenAI's API
+# Usage: ./speech.sh --text "Text to speak" [options]
+# See --help for more information
 
+# Exit on error, unset variable, and pipe failures
+set -euo pipefail
 
+# Default configuration
 SPEED="1.0"
 VOICE="onyx"
 API_KEY="NONE"
 FILE="AUTO"
 VERBOSE="F"
+MODEL="tts-1"  # Make model configurable
 
 # Print usage information
 show_help() {
@@ -21,6 +28,7 @@ Options:
   -s, --speed SPEED   Speech speed (default: 1.0)
   -o, --output FILE   Output file path (default: auto-generated)
   -a, --api_key KEY   OpenAI API key
+  -m, --model MODEL   TTS model to use (default: tts-1)
       --verbose       Enable verbose logging
   -V, --verbose       Same as --verbose
 
@@ -32,119 +40,197 @@ EOF
     exit 0
 }
 
+# Function to handle errors
+error_exit() {
+    log "ERROR: $1" >&2
+    exit "${2:-1}"  # Default exit code is 1
+}
+
 # echo and send a notification
 log() {
-    echo $1
-    if [[ "$(command -v notify-send)" ]]
-    then
-        notify-send "Quick_speech.sh: $1"
+    echo "$1"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "speech.sh: $1"
     fi
 }
+
+# Verbose logging
 log2() {
-    if [[ "$VERBOSE" != "F" ]]
-    then
-        log $1
+    if [[ "$VERBOSE" != "F" ]]; then
+        log "$1"
     fi
 }
 
-while (( $# > 0 )); do
-    case "$1" in
-        -h | --help)
-            show_help
-            ;;
-        -v | --voice)
-            VOICE="$2"
-            shift 2
-            ;;
-        -t | --text)
-            TEXT="$2"
-            shift 2
-            ;;
-        -s | --speed)
-            SPEED="$2"
-            shift 2
-            ;;
-        -o | --output)
-            FILE="$2"
-            shift 2
-            ;;
-        -a | --api_key)
-            API_KEY="$2"
-            shift 2
-            ;;
-        -V | --verbose)
-            VERBOSE="T"
-            shift 1
-            ;;
-        *)
-            echo "Invalid option(s): $@"
-            echo "Use -h or --help for usage information"
-            exit 1
-            ;;
+# Check if required commands exist
+check_dependencies() {
+    local missing=0
+    for cmd in curl jq mplayer; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            log "Required command not found: $cmd"
+            missing=1
+        fi
+    done
+    
+    if [[ $missing -eq 1 ]]; then
+        error_exit "Missing dependencies. Please install the required packages." 2
+    fi
+}
 
-    esac
-done
+# Process command line arguments
+parse_arguments() {
+    # Initialize TEXT as empty to check if it's provided
+    TEXT=""
+    
+    while (( $# > 0 )); do
+        case "$1" in
+            -h | --help)
+                show_help
+                ;;
+            -v | --voice)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                VOICE="$2"
+                shift 2
+                ;;
+            -t | --text)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                TEXT="$2"
+                shift 2
+                ;;
+            -s | --speed)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                SPEED="$2"
+                shift 2
+                ;;
+            -o | --output)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                FILE="$2"
+                shift 2
+                ;;
+            -a | --api_key)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                API_KEY="$2"
+                shift 2
+                ;;
+            -m | --model)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                MODEL="$2"
+                shift 2
+                ;;
+            -V | --verbose)
+                VERBOSE="T"
+                shift 1
+                ;;
+            *)
+                error_exit "Invalid option(s): $1. Use -h or --help for usage information."
+                ;;
+        esac
+    done
+    
+    # Check if TEXT is provided
+    if [[ -z "$TEXT" ]]; then
+        log "No text to voice"
+        echo "Use -h or --help for usage information"
+        exit 0
+    fi
+}
 
-if [ -z "$TEXT" ]
-then
-    log "No text to voice"
-    echo "Use -h or --help for usage information"
-    exit 0
-fi
+# Get API key from available sources
+get_api_key() {
+    if [[ "$API_KEY" == "NONE" ]]; then
+        # First check for environment variable
+        if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+            log2 "Using API key from OPENAI_API_KEY environment variable"
+            API_KEY="$OPENAI_API_KEY"
+        # Then check for API_KEY file
+        elif [[ ! -e "API_KEY" ]]; then
+            error_exit "No API key given as argument, no OPENAI_API_KEY environment variable, and no file called API_KEY"
+        else
+            log2 "Using API key from API_KEY file"
+            # Use cat with quotes to handle potential whitespace issues
+            API_KEY="$(cat "API_KEY")"
+        fi
+    fi
+}
 
-if [[ "$API_KEY" == "NONE" ]]
-then
-    # First check for environment variable
-    if [[ ! -z "$OPENAI_API_KEY" ]]
-    then
-        log2 "Using API key from OPENAI_API_KEY environment variable"
-        API_KEY="$OPENAI_API_KEY"
-    # Then check for API_KEY file
-    elif [[ ! -e "API_KEY" ]]
-    then
-        log "No API key given as argument, no OPENAI_API_KEY environment variable, and no file called API_KEY"
-        exit 1
+# Generate output filename if not provided
+generate_filename() {
+    if [[ "$FILE" == "AUTO" ]]; then
+        local temp_dir
+        temp_dir="$(dirname "$(mktemp -u)")"
+        # Use more secure hash function if available
+        if command -v sha256sum >/dev/null 2>&1; then
+            FILE="${temp_dir}/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | sha256sum | cut -d" " -f1).mp3"
+        else
+            FILE="${temp_dir}/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1).mp3"
+        fi
+        log2 "Auto-generated filename: $FILE"
+    fi
+}
+
+# Make API call to generate speech
+generate_speech() {
+    if [[ ! -e "$FILE" ]]; then
+        log "API call for \"$TEXT\""
+
+        local response
+        response=$(curl --fail --silent --show-error https://api.openai.com/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d "$(jq -n \
+                --arg model "$MODEL" \
+                --arg input "$TEXT" \
+                --arg voice "$VOICE" \
+                --arg speed "$SPEED" \
+                '{model: $model, input: $input, voice: $voice, speed: $speed}')" \
+            -o "$FILE" || echo "CURL_ERROR")
+
+        if [[ "$response" == "CURL_ERROR" ]]; then
+            error_exit "API call failed" 3
+        fi
+            
+        if [[ ! -e "$FILE" ]]; then
+            error_exit "No file created, something went wrong." 4
+        fi
+
+        if [[ "$(file --brief "$FILE" 2>/dev/null)" == "JSON data" ]]; then
+            local error_message
+            error_message="$(jq -r '.error.message // "Unknown error"' < "$FILE")"
+            rm -f "$FILE"
+            error_exit "OpenAI API error: $error_message" 5
+        fi
     else
-        log2 "Using API key from API_KEY file"
-        API_KEY=$(cat "API_KEY")
+        log "Skipping API call, using cached file"
     fi
-fi
+}
 
-if [[ "$FILE" == "AUTO" ]]
-then
-    FILE="$(dirname $(mktemp))/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1).mp3"
-fi
+# Play the audio file
+play_audio() {
+    log2 "Playing $FILE"
+    mplayer -quiet -really-quiet "$FILE" || error_exit "Failed to play audio file" 6
+}
 
-if [[ ! -e "$FILE" ]]
-then
-    log "API call for \"$TEXT\""
+# Main function
+main() {
+    check_dependencies
+    parse_arguments "$@"
+    get_api_key
+    generate_filename
+    generate_speech
+    play_audio
+}
 
-    curl https://api.openai.com/v1/audio/speech \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_KEY" \
-    -d "$(jq -n --arg model "tts-1" --arg input "$TEXT" --arg voice "$VOICE" --arg speed "$SPEED" '{model: $model, input: $input, voice: $voice, speed: $speed}')" \
-    -o "$FILE"
-
-    if [[ ! -e "$FILE" ]]
-    then
-        log "No file created, something went wrong."
-        exit 1
-    fi
-
-    if [[ "$(file --brief $FILE)" == "JSON data" ]]
-    then
-        mess1="JSON data output, something went wrong"
-        mess2="$(cat $FILE | jq '.error | .message')"
-        log "$mess1\n$mess2"
-        rm $FILE
-        exit 1
-    fi
-
-else
-    log "Skipping API call"
-
-fi
-
-log2 "Playing $FILE"
-mplayer -quiet -really-quiet "$FILE"
+# Execute main function with all arguments
+main "$@"
 

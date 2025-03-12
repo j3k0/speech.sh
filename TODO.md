@@ -1,5 +1,6 @@
 - [x] OPENAI_API_KEY from environment variable
 - [x] Add --help and --verbose (-h and -v)
-- [ ] Use best practices
+- [x] Use best practices
+- [ ] If --verbose isn't set, the script should output no text at all (or only on stderr)
 - [ ] Evaluate use of ffmpeg instead of mplayer
 - [ ] Evaluate option to make it MCP compatible (add an mcp.sh script, using mcp in stdio mode) -- check MCP server protocol online.
