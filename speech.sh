@@ -1,4 +1,4 @@
-#!/usr/bin/zsh
+#!/bin/zsh
 
 
 SPEED="1.0"
@@ -64,12 +64,20 @@ fi
 
 if [[ "$API_KEY" == "NONE" ]]
 then
-    if [[ ! -e "API_KEY" ]]
+    # First check for environment variable
+    if [[ ! -z "$OPENAI_API_KEY" ]]
     then
-        log "No API key given as argument and no file called API_KEY"
+        log2 "Using API key from OPENAI_API_KEY environment variable"
+        API_KEY="$OPENAI_API_KEY"
+    # Then check for API_KEY file
+    elif [[ ! -e "API_KEY" ]]
+    then
+        log "No API key given as argument, no OPENAI_API_KEY environment variable, and no file called API_KEY"
         exit 1
+    else
+        log2 "Using API key from API_KEY file"
+        API_KEY=$(cat "API_KEY")
     fi
-    API_KEY=$(cat "API_KEY")
 fi
 
 if [[ "$FILE" == "AUTO" ]]
