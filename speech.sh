@@ -42,22 +42,25 @@ EOF
 
 # Function to handle errors
 error_exit() {
-    log "ERROR: $1" >&2
+    log_err "ERROR: $1"
     exit "${2:-1}"  # Default exit code is 1
 }
 
-# echo and send a notification
-log() {
-    echo "$1"
+# Log to stderr - always displayed regardless of verbose setting
+log_err() {
+    echo "$1" >&2
     if command -v notify-send >/dev/null 2>&1; then
         notify-send "speech.sh: $1"
     fi
 }
 
-# Verbose logging
-log2() {
+# Log to stdout - only when verbose is enabled
+log() {
     if [[ "$VERBOSE" != "F" ]]; then
-        log "$1"
+        echo "$1"
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send "speech.sh: $1"
+        fi
     fi
 }
 
@@ -66,7 +69,7 @@ check_dependencies() {
     local missing=0
     for cmd in curl jq mplayer; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
-            log "Required command not found: $cmd"
+            log_err "Required command not found: $cmd"
             missing=1
         fi
     done
@@ -140,8 +143,8 @@ parse_arguments() {
     
     # Check if TEXT is provided
     if [[ -z "$TEXT" ]]; then
-        log "No text to voice"
-        echo "Use -h or --help for usage information"
+        log_err "No text to voice"
+        echo "Use -h or --help for usage information" >&2
         exit 0
     fi
 }
@@ -151,13 +154,13 @@ get_api_key() {
     if [[ "$API_KEY" == "NONE" ]]; then
         # First check for environment variable
         if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-            log2 "Using API key from OPENAI_API_KEY environment variable"
+            log "Using API key from OPENAI_API_KEY environment variable"
             API_KEY="$OPENAI_API_KEY"
         # Then check for API_KEY file
         elif [[ ! -e "API_KEY" ]]; then
             error_exit "No API key given as argument, no OPENAI_API_KEY environment variable, and no file called API_KEY"
         else
-            log2 "Using API key from API_KEY file"
+            log "Using API key from API_KEY file"
             # Use cat with quotes to handle potential whitespace issues
             API_KEY="$(cat "API_KEY")"
         fi
@@ -175,7 +178,7 @@ generate_filename() {
         else
             FILE="${temp_dir}/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1).mp3"
         fi
-        log2 "Auto-generated filename: $FILE"
+        log "Auto-generated filename: $FILE"
     fi
 }
 
@@ -217,7 +220,7 @@ generate_speech() {
 
 # Play the audio file
 play_audio() {
-    log2 "Playing $FILE"
+    log "Playing $FILE"
     mplayer -quiet -really-quiet "$FILE" || error_exit "Failed to play audio file" 6
 }
 
