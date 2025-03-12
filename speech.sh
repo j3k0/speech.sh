@@ -13,6 +13,8 @@ API_KEY="NONE"
 FILE="AUTO"
 VERBOSE="F"
 MODEL="tts-1"  # Make model configurable
+MAX_RETRIES="3"  # Maximum number of retry attempts for API calls
+TIMEOUT="30"     # Timeout in seconds for API calls
 
 # Print usage information
 show_help() {
@@ -31,6 +33,8 @@ Options:
   -m, --model MODEL   TTS model to use (default: tts-1)
       --verbose       Enable verbose logging
   -V, --verbose       Same as --verbose
+  -r, --retries N     Number of retry attempts for API calls (default: 3)
+  -T, --timeout N     Timeout in seconds for API calls (default: 30)
 
 The API key can be provided in three ways (in order of precedence):
 1. Command-line argument (-a, --api_key)
@@ -76,6 +80,21 @@ check_dependencies() {
     
     if [[ $missing -eq 1 ]]; then
         error_exit "Missing dependencies. Please install the required packages." 2
+    fi
+
+    # Check curl version for retry support
+    if curl --version | grep -q "curl 7."; then
+        local curl_version
+        curl_version=$(curl --version | head -n 1 | cut -d ' ' -f 2)
+        local curl_major
+        local curl_minor
+        curl_major=$(echo "$curl_version" | cut -d. -f1)
+        curl_minor=$(echo "$curl_version" | cut -d. -f2)
+        
+        # If curl version < 7.52.0, warn about lack of retry support
+        if [[ $curl_major -lt 7 || ($curl_major -eq 7 && $curl_minor -lt 52) ]]; then
+            log_err "Warning: Your curl version ($curl_version) doesn't support native retries. Falling back to script-based retries."
+        fi
     fi
 }
 
@@ -131,6 +150,20 @@ parse_arguments() {
                 MODEL="$2"
                 shift 2
                 ;;
+            -r | --retries)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                MAX_RETRIES="$2"
+                shift 2
+                ;;
+            -T | --timeout)
+                if [[ -z "${2:-}" ]]; then
+                    error_exit "Missing value for parameter: $1"
+                fi
+                TIMEOUT="$2"
+                shift 2
+                ;;
             -V | --verbose)
                 VERBOSE="T"
                 shift 1
@@ -182,25 +215,93 @@ generate_filename() {
     fi
 }
 
-# Make API call to generate speech
+# Make API call to generate speech with retry logic
 generate_speech() {
     if [[ ! -e "$FILE" ]]; then
         log "API call for \"$TEXT\""
-
-        local response
-        response=$(curl --fail --silent --show-error https://api.openai.com/v1/audio/speech \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $API_KEY" \
-            -d "$(jq -n \
-                --arg model "$MODEL" \
-                --arg input "$TEXT" \
-                --arg voice "$VOICE" \
-                --arg speed "$SPEED" \
-                '{model: $model, input: $input, voice: $voice, speed: $speed}')" \
-            -o "$FILE" || echo "CURL_ERROR")
-
-        if [[ "$response" == "CURL_ERROR" ]]; then
-            error_exit "API call failed" 3
+        
+        # Create JSON payload once to avoid recreating it in each retry
+        local json_payload
+        json_payload=$(jq -n \
+            --arg model "$MODEL" \
+            --arg input "$TEXT" \
+            --arg voice "$VOICE" \
+            --arg speed "$SPEED" \
+            '{model: $model, input: $input, voice: $voice, speed: $speed}')
+        
+        local retry_count=0
+        local success=false
+        local error_message=""
+        
+        # Try to get curl version to determine if it supports native retries
+        local supports_native_retry=false
+        if curl --version | grep -q "curl 7."; then
+            local curl_version
+            curl_version=$(curl --version | head -n 1 | cut -d ' ' -f 2)
+            local curl_major
+            local curl_minor
+            curl_major=$(echo "$curl_version" | cut -d. -f1)
+            curl_minor=$(echo "$curl_version" | cut -d. -f2)
+            
+            # Retry option was added in curl 7.52.0
+            if [[ $curl_major -gt 7 || ($curl_major -eq 7 && $curl_minor -ge 52) ]]; then
+                supports_native_retry=true
+            fi
+        fi
+        
+        if [[ "$supports_native_retry" == "true" ]]; then
+            # Use curl's built-in retry mechanism for newer curl versions
+            log "Using curl's native retry mechanism"
+            local response
+            response=$(curl --fail --silent --show-error \
+                --retry "$MAX_RETRIES" \
+                --retry-delay 1 \
+                --retry-max-time $(( TIMEOUT * 2 )) \
+                --max-time "$TIMEOUT" \
+                --connect-timeout 10 \
+                https://api.openai.com/v1/audio/speech \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $API_KEY" \
+                -d "$json_payload" \
+                -o "$FILE" || echo "CURL_ERROR:$?")
+            
+            if [[ "$response" =~ ^CURL_ERROR:([0-9]+)$ ]]; then
+                error_message="curl failed with exit code ${BASH_REMATCH[1]}"
+                success=false
+            else
+                success=true
+            fi
+        else
+            # Manual retry logic for older curl versions
+            while [[ $retry_count -lt $MAX_RETRIES && "$success" == "false" ]]; do
+                if [[ $retry_count -gt 0 ]]; then
+                    log "Retry attempt $retry_count/$MAX_RETRIES..."
+                    # Add exponential backoff
+                    sleep $(( 2 ** (retry_count - 1) ))
+                fi
+                
+                local response
+                response=$(curl --fail --silent --show-error \
+                    --max-time "$TIMEOUT" \
+                    --connect-timeout 10 \
+                    https://api.openai.com/v1/audio/speech \
+                    -H "Content-Type: application/json" \
+                    -H "Authorization: Bearer $API_KEY" \
+                    -d "$json_payload" \
+                    -o "$FILE" || echo "CURL_ERROR:$?")
+                
+                if [[ "$response" =~ ^CURL_ERROR:([0-9]+)$ ]]; then
+                    error_message="curl failed with exit code ${BASH_REMATCH[1]}"
+                    retry_count=$((retry_count + 1))
+                else
+                    success=true
+                    break
+                fi
+            done
+        fi
+        
+        if [[ "$success" == "false" ]]; then
+            error_exit "API call failed after $retry_count attempts: $error_message" 3
         fi
             
         if [[ ! -e "$FILE" ]]; then
