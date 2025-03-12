@@ -7,6 +7,31 @@ API_KEY="NONE"
 FILE="AUTO"
 VERBOSE="F"
 
+# Print usage information
+show_help() {
+    cat << EOF
+Usage: $(basename $0) [options]
+
+Convert text to speech using OpenAI's API.
+
+Options:
+  -h, --help          Show this help message and exit
+  -t, --text TEXT     Text to convert to speech (required)
+  -v, --voice VOICE   Voice model to use (default: onyx)
+  -s, --speed SPEED   Speech speed (default: 1.0)
+  -o, --output FILE   Output file path (default: auto-generated)
+  -a, --api_key KEY   OpenAI API key
+      --verbose       Enable verbose logging
+  -V, --verbose       Same as --verbose
+
+The API key can be provided in three ways (in order of precedence):
+1. Command-line argument (-a, --api_key)
+2. OPENAI_API_KEY environment variable
+3. A file named 'API_KEY' in the script's directory
+EOF
+    exit 0
+}
+
 # echo and send a notification
 log() {
     echo $1
@@ -24,6 +49,9 @@ log2() {
 
 while (( $# > 0 )); do
     case "$1" in
+        -h | --help)
+            show_help
+            ;;
         -v | --voice)
             VOICE="$2"
             shift 2
@@ -44,12 +72,13 @@ while (( $# > 0 )); do
             API_KEY="$2"
             shift 2
             ;;
-         --verbose)
+        -V | --verbose)
             VERBOSE="T"
-            shift 2
+            shift 1
             ;;
         *)
             echo "Invalid option(s): $@"
+            echo "Use -h or --help for usage information"
             exit 1
             ;;
 
@@ -59,6 +88,7 @@ done
 if [ -z "$TEXT" ]
 then
     log "No text to voice"
+    echo "Use -h or --help for usage information"
     exit 0
 fi
 
