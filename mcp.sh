@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # Path to the speech.sh script (assumes it's in the same directory)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SPEECH_SCRIPT="$SCRIPT_DIR/speech.sh"
 
 # Check if the speech.sh script exists and is executable
