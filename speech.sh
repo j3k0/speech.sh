@@ -42,6 +42,54 @@ function log_to_file() {
     echo "$formatted_message" >> "$LOG_FILE"
 }
 
+# Function to log to stderr - always displayed regardless of verbose setting
+log_err() {
+    echo "$1" >&2
+    log_to_file "ERROR" "$1"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "speech.sh: $1"
+    fi
+}
+
+# Function to log to stdout - only when verbose is enabled
+log() {
+    if [[ "$VERBOSE" != "F" ]]; then
+        echo "$1"
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send "speech.sh: $1"
+        fi
+    fi
+    # Always log to file, regardless of verbose setting
+    log_to_file "INFO" "$1"
+}
+
+# Function to handle errors
+error_exit() {
+    log_err "ERROR: $1"
+    log_to_file "ERROR" "$1"
+    exit "${2:-1}"  # Default exit code is 1
+}
+
+# Check if the command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Detect if being called by MCP and adjust settings if needed
+if [[ -n "${MCP_CALLING:-}" ]] || [[ "$0" == *"mcp"* ]] || [[ "$(ps -p $PPID -o comm=)" == *"mcp"* ]]; then
+    log_to_file "SYSTEM" "Detected running under MCP, adjusting settings"
+    # Increase timeout and retries for better reliability when called by MCP
+    TIMEOUT="60"
+    MAX_RETRIES="3"
+    # Use more reliable audio player under MCP
+    PLAYER="ffmpeg"
+    # Force output to a predictable location if not specified
+    if [[ "$FILE" == "AUTO" ]]; then
+        FILE="/tmp/openai_speech_mcp_output.mp3"
+        log_to_file "FILE" "Force output file to $FILE for MCP"
+    fi
+fi
+
 # Print usage information
 show_help() {
     cat << EOF
@@ -70,39 +118,6 @@ The API key can be provided in three ways (in order of precedence):
 3. A file named 'API_KEY' in the script's directory
 EOF
     exit 0
-}
-
-# Function to handle errors
-error_exit() {
-    log_err "ERROR: $1"
-    log_to_file "ERROR" "$1"
-    exit "${2:-1}"  # Default exit code is 1
-}
-
-# Log to stderr - always displayed regardless of verbose setting
-log_err() {
-    echo "$1" >&2
-    log_to_file "ERROR" "$1"
-    if command -v notify-send >/dev/null 2>&1; then
-        notify-send "speech.sh: $1"
-    fi
-}
-
-# Log to stdout - only when verbose is enabled
-log() {
-    if [[ "$VERBOSE" != "F" ]]; then
-        echo "$1"
-        if command -v notify-send >/dev/null 2>&1; then
-            notify-send "speech.sh: $1"
-        fi
-    fi
-    # Always log to file, regardless of verbose setting
-    log_to_file "INFO" "$1"
-}
-
-# Check if the command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
 }
 
 # Check if required commands exist
@@ -164,29 +179,6 @@ check_dependencies() {
     if [[ $missing -eq 1 ]]; then
         log_to_file "ERROR" "Dependency check failed, missing required components"
         error_exit "Missing dependencies. Please install the required packages." 2
-    fi
-
-    # Check curl version for retry support
-    log_to_file "SYSTEM" "Checking curl version for retry support"
-    if curl --version | grep -q "curl 7."; then
-        local curl_version
-        curl_version=$(curl --version | head -n 1 | cut -d ' ' -f 2)
-        local curl_major
-        local curl_minor
-        curl_major=$(echo "$curl_version" | cut -d. -f1)
-        curl_minor=$(echo "$curl_version" | cut -d. -f2)
-        
-        log_to_file "SYSTEM" "Found curl version: $curl_version"
-        
-        # If curl version < 7.52.0, warn about lack of retry support
-        if [[ $curl_major -lt 7 || ($curl_major -eq 7 && $curl_minor -lt 52) ]]; then
-            log_err "Warning: Your curl version ($curl_version) doesn't support native retries. Falling back to script-based retries."
-            log_to_file "WARN" "Curl version $curl_version doesn't support native retries, will use script-based retries"
-        else
-            log_to_file "SYSTEM" "Curl version $curl_version supports native retries"
-        fi
-    else
-        log_to_file "WARN" "Unable to determine curl version, will use script-based retries"
     fi
     
     log_to_file "SYSTEM" "All dependencies checked successfully"
@@ -312,6 +304,20 @@ get_api_key() {
             log "Using API key from OPENAI_API_KEY environment variable"
             log_to_file "API" "Using API key from OPENAI_API_KEY environment variable"
             API_KEY="$OPENAI_API_KEY"
+            
+            # Special handling for MCP environment
+            if [[ -n "${MCP_CALLING:-}" ]] || [[ "$0" == *"mcp"* ]] || [[ "$(ps -p $PPID -o comm=)" == *"mcp"* ]]; then
+                # Check if API key looks like a placeholder
+                if [[ "$API_KEY" == *"your-api"* || "$API_KEY" == *"placeholder"* ]]; then
+                    log_to_file "ERROR" "Detected placeholder API key when called by MCP"
+                    log_err "MCP provided a placeholder API key. Please set a valid OpenAI API key."
+                    # Look for API key in alternative locations for MCP
+                    if [[ -e "$HOME/.openai_api_key" ]]; then
+                        log_to_file "API" "Found alternative API key at $HOME/.openai_api_key"
+                        API_KEY="$(cat "$HOME/.openai_api_key")"
+                    fi
+                fi
+            fi
         # Then check for API_KEY file
         elif [[ ! -e "API_KEY" ]]; then
             log_to_file "API" "No API key available from any source"
@@ -329,6 +335,14 @@ get_api_key() {
         # Mask the key for privacy in logs - only show first 4 and last 4 chars
         local masked_key="${API_KEY:0:4}...${API_KEY: -4}"
         log_to_file "API" "API key obtained (masked: $masked_key)"
+        
+        # Additional validation - OpenAI API keys typically start with "sk-"
+        if [[ ! "$API_KEY" =~ ^sk- ]]; then
+            log_to_file "WARN" "API key doesn't match expected format (should start with 'sk-')"
+            if [[ -n "${MCP_CALLING:-}" ]] || [[ "$0" == *"mcp"* ]] || [[ "$(ps -p $PPID -o comm=)" == *"mcp"* ]]; then
+                log_to_file "WARN" "This may cause issues with MCP integration"
+            fi
+        fi
     else
         log_to_file "ERROR" "API key appears invalid or empty"
     fi
@@ -382,90 +396,41 @@ generate_speech() {
         local retry_count=0
         local success=false
         local error_message=""
-        
-        # Try to get curl version to determine if it supports native retries
-        local supports_native_retry=false
-        if curl --version | grep -q "curl 7."; then
-            local curl_version
-            curl_version=$(curl --version | head -n 1 | cut -d ' ' -f 2)
-            local curl_major
-            local curl_minor
-            curl_major=$(echo "$curl_version" | cut -d. -f1)
-            curl_minor=$(echo "$curl_version" | cut -d. -f2)
-            
-            log_to_file "API" "Detected curl version: $curl_version"
-            
-            # Retry option was added in curl 7.52.0
-            if [[ $curl_major -gt 7 || ($curl_major -eq 7 && $curl_minor -ge 52) ]]; then
-                supports_native_retry=true
-                log_to_file "API" "Curl version supports native retry"
-            else
-                log_to_file "API" "Curl version does not support native retry, will use script-based retry"
+
+        # Simple retry approach with basic curl options
+        while [[ $retry_count -le $MAX_RETRIES && "$success" != "true" ]]; do
+            if [[ $retry_count -gt 0 ]]; then
+                log "Retry attempt $retry_count/$MAX_RETRIES..."
+                log_to_file "API" "Retry attempt $retry_count/$MAX_RETRIES"
+                # Add simple backoff
+                local wait_time=3
+                log_to_file "API" "Waiting $wait_time seconds before retry"
+                sleep $wait_time
             fi
-        fi
-        
-        if [[ "$supports_native_retry" == "true" ]]; then
-            # Use curl's built-in retry mechanism for newer curl versions
-            log "Using curl's native retry mechanism"
-            log_to_file "API" "Using curl's native retry mechanism with max retries: $MAX_RETRIES, timeout: $TIMEOUT"
+            
+            # Simple curl command - no complex options
+            log_to_file "API" "Making API request to OpenAI (attempt $retry_count)"
             local response
-            response=$(curl --fail --silent --show-error \
-                --retry "$MAX_RETRIES" \
-                --retry-delay 1 \
-                --retry-max-time $(( TIMEOUT * 2 )) \
+            response=$(curl --silent --show-error \
                 --max-time "$TIMEOUT" \
-                --connect-timeout 10 \
                 https://api.openai.com/v1/audio/speech \
                 -H "Content-Type: application/json" \
                 -H "Authorization: Bearer $API_KEY" \
                 -d "$json_payload" \
-                -o "$FILE" || echo "CURL_ERROR:$?")
-            
-            if [[ "$response" =~ ^CURL_ERROR:([0-9]+)$ ]]; then
-                error_message="curl failed with exit code ${BASH_REMATCH[1]}"
-                log_to_file "ERROR" "API call failed with curl error code: ${BASH_REMATCH[1]}"
-                success=false
-            else
-                success=true
-                log_to_file "API" "API call successful, response saved to $FILE"
-            fi
-        else
-            # Manual retry logic for older curl versions
-            log_to_file "API" "Using script-based retry mechanism with max retries: $MAX_RETRIES"
-            while [[ $retry_count -lt $MAX_RETRIES && "$success" == "false" ]]; do
-                if [[ $retry_count -gt 0 ]]; then
-                    log "Retry attempt $retry_count/$MAX_RETRIES..."
-                    log_to_file "API" "Retry attempt $retry_count/$MAX_RETRIES"
-                    # Add exponential backoff
-                    local wait_time=$(( 2 ** (retry_count - 1) ))
-                    log_to_file "API" "Waiting $wait_time seconds before retry (exponential backoff)"
-                    sleep $wait_time
-                fi
-                
-                local response
-                log_to_file "API" "Making API request to OpenAI"
-                response=$(curl --fail --silent --show-error \
-                    --max-time "$TIMEOUT" \
-                    --connect-timeout 10 \
-                    https://api.openai.com/v1/audio/speech \
-                    -H "Content-Type: application/json" \
-                    -H "Authorization: Bearer $API_KEY" \
-                    -d "$json_payload" \
-                    -o "$FILE" || echo "CURL_ERROR:$?")
-                
-                if [[ "$response" =~ ^CURL_ERROR:([0-9]+)$ ]]; then
-                    error_message="curl failed with exit code ${BASH_REMATCH[1]}"
-                    log_to_file "ERROR" "API call failed with curl error code: ${BASH_REMATCH[1]}"
+                -o "$FILE" 2>&1) || {
+                    local exit_code=$?
+                    error_message="curl failed with exit code $exit_code: $response"
+                    log_to_file "ERROR" "$error_message"
                     retry_count=$((retry_count + 1))
-                else
-                    success=true
-                    log_to_file "API" "API call successful on attempt $retry_count, response saved to $FILE"
-                    break
-                fi
-            done
-        fi
+                    continue
+                }
+            
+            # If we got here, it means curl succeeded
+            success=true
+            log_to_file "API" "API call successful on attempt $retry_count, response saved to $FILE"
+        done
         
-        if [[ "$success" == "false" ]]; then
+        if [[ "$success" != "true" ]]; then
             log_to_file "ERROR" "API call failed after $retry_count attempts: $error_message"
             error_exit "API call failed after $retry_count attempts: $error_message" 3
         fi
@@ -495,6 +460,18 @@ generate_speech() {
 play_audio() {
     log "Playing $FILE with $PLAYER"
     log_to_file "AUDIO" "Attempting to play $FILE with $PLAYER"
+    
+    # If running under MCP, just ensure file exists and is valid
+    if [[ -n "${MCP_CALLING:-}" ]] || [[ "$0" == *"mcp"* ]] || [[ "$(ps -p $PPID -o comm=)" == *"mcp"* ]]; then
+        if [[ -e "$FILE" && -s "$FILE" ]]; then
+            log_to_file "AUDIO" "Running under MCP - file exists and is non-empty"
+            log_to_file "AUDIO" "MCP will handle playback separately"
+            return 0
+        else
+            log_to_file "ERROR" "Audio file does not exist or is empty"
+            error_exit "No valid audio file found" 6
+        fi
+    fi
     
     if [[ "$PLAYER" == "ffmpeg" ]]; then
         # Use ffplay from the ffmpeg suite
