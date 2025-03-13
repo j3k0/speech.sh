@@ -6,13 +6,13 @@ A powerful command-line utility for text-to-speech conversion using OpenAI's API
 
 - Convert text to speech with a simple command
 - Multiple voice options (onyx, alloy, echo, fable, nova, shimmer)
-- Adjustable speech speed
+- Adjustable speech speed (0.25 to 4.0)
 - Support for both tts-1 and tts-1-hd models
 - Flexible API key management (command-line, environment variable, or file)
 - Automatic caching to avoid duplicate API calls
-- Retry mechanism for handling network issues
+- Robust retry mechanism for handling network issues
 - Support for both ffmpeg and mplayer for audio playback
-- MCP (Model Context Protocol) compatibility for integration with AI tools
+- MCP (Model Context Protocol) compatibility for integration with AI assistants
 
 ## Installation
 
@@ -24,7 +24,7 @@ A powerful command-line utility for text-to-speech conversion using OpenAI's API
 
 2. Make the scripts executable:
    ```bash
-   chmod +x speech.sh mcp.sh
+   chmod +x speech.sh mcp.sh launch
    ```
 
 3. Ensure you have the required dependencies:
@@ -82,9 +82,9 @@ the previously generated audio file.
 
 The script includes sophisticated retry logic for API calls:
 - Automatically retries failed API calls (default: 3 attempts)
-- Implements exponential backoff
+- Implements exponential backoff for reliability
 - Uses native curl retry mechanism when available
-- Configurable timeout values
+- Configurable timeout and retry values
 
 ### Audio Player Options
 
@@ -96,9 +96,24 @@ You can choose your preferred audio player:
 ## MCP Integration
 
 The `mcp.sh` script provides Model Context Protocol compatibility, allowing the 
-text-to-speech functionality to be used by MCP-compatible LLM applications like Claude.
+text-to-speech functionality to be used by MCP-compatible AI assistants like Claude.
+
+To use the MCP server:
+
+```bash
+# Start the MCP server using the launch script
+./launch
+```
 
 For detailed instructions on using the MCP integration, see [MCP_README.md](MCP_README.md).
+
+## Security Considerations
+
+The script takes several steps to ensure security:
+- Uses proper JSON handling with `jq` for parameter processing
+- Implements proper array-based parameter passing to prevent shell injection
+- Validates needed dependencies before execution
+- Uses error handling throughout the execution process
 
 ## Examples
 

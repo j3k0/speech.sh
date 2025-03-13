@@ -1,23 +1,39 @@
 # Speech MCP Server
 
-This MCP (Model Context Protocol) server provides text-to-speech capabilities through OpenAI's API. It allows client applications to convert text into spoken audio.
+This MCP (Model Context Protocol) server provides text-to-speech capabilities through OpenAI's API. It allows AI assistants and other applications to convert text into spoken audio.
 
 ## Installation
 
 1. Ensure you have the following dependencies installed:
    - `zsh` shell
    - `jq` for JSON parsing
+   - `curl` for API communication
+   - `ffmpeg` or `mplayer` for audio playback (ffmpeg preferred)
    - `speech.sh` (included in the same directory)
 
-2. Make sure both scripts are executable:
+2. Make sure all scripts are executable:
    ```bash
-   chmod +x mcp.sh speech.sh
+   chmod +x mcp.sh speech.sh launch
    ```
 
 3. Set up your OpenAI API key (required for the TTS service):
    ```bash
    export OPENAI_API_KEY="your-api-key-here"
    ```
+
+## Starting the Server
+
+The simplest way to start the MCP server is by using the included launch script:
+
+```bash
+./launch
+```
+
+Or you can run the MCP script directly:
+
+```bash
+./mcp.sh
+```
 
 ## Configuration
 
@@ -37,11 +53,11 @@ export SPEECH_SPEED="1.2"
 export SPEECH_MODEL="tts-1-hd"
 ```
 
-## API Methods
+## MCP Tools API
 
 ### speak
 
-Converts text to speech and returns the path to the generated audio file.
+Converts text to speech and plays it through your device's speakers.
 
 **Parameters:**
 - `text` (string, required): The text to convert to speech
@@ -51,9 +67,12 @@ Converts text to speech and returns the path to the generated audio file.
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "speak",
+  "method": "tools/call",
   "params": {
-    "text": "Hello, I'm using the speech MCP server!"
+    "name": "speak",
+    "arguments": {
+      "text": "Hello, I'm using the speech MCP server!"
+    }
   }
 }
 ```
@@ -64,12 +83,24 @@ Converts text to speech and returns the path to the generated audio file.
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "status": "success",
-    "message": "Speech generated",
-    "file_path": "/tmp/tmp.XXXXXXXXXX"
+    "content": [
+      {
+        "type": "text",
+        "text": "Done"
+      }
+    ],
+    "isError": false
   }
 }
 ```
+
+## Security Considerations
+
+The MCP server implements several security measures:
+- Uses proper JSON handling with `jq` to avoid injection vulnerabilities
+- Implements parameter passing using arrays rather than string concatenation
+- Validates required parameters before processing
+- Runs the speech generation in a background process to avoid blocking the server
 
 ## Usage Examples
 
@@ -80,7 +111,7 @@ Converts text to speech and returns the path to the generated audio file.
 ./mcp.sh
 
 # In another terminal, use it with a JSON-RPC request
-echo '{"jsonrpc":"2.0","id":1,"method":"speak","params":{"text":"Hello world"}}' | ./mcp.sh
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"speak","arguments":{"text":"Hello world"}}}' | nc localhost 8123
 ```
 
 ### From a client application
@@ -93,9 +124,12 @@ def speak(text):
     request = {
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "speak",
+        "method": "tools/call",
         "params": {
-            "text": text
+            "name": "speak",
+            "arguments": {
+                "text": text
+            }
         }
     }
     
@@ -111,18 +145,19 @@ def speak(text):
     
     if process.returncode == 0:
         response = json.loads(stdout)
-        if "result" in response:
-            return response["result"]
+        return response
     
     return None
 
 # Example usage
 result = speak("Hello, this is a test of the speech MCP server")
-print(f"Speech file created at: {result['file_path']}")
+print(result)
 ```
 
 ## Notes
 
-- The speech audio is saved to a temporary file. You are responsible for managing these files (playing and/or deleting them).
-- The server does not stream the audio directly - it returns the file path for you to handle.
-- The default configuration uses the "onyx" voice at normal speed with the standard TTS model, which is suitable for most purposes. 
+- The speech is played immediately through your system's speakers
+- The server handles the API communication, caching, and audio playback
+- Default configuration uses the "onyx" voice at normal speed with the standard TTS model
+- The speech generation runs in the background, so the API response returns immediately
+- For AI assistants like Claude, this integration allows them to speak to users directly 
