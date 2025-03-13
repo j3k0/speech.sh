@@ -102,6 +102,35 @@ The MCP server implements several security measures:
 - Validates required parameters before processing
 - Runs the speech generation in a background process to avoid blocking the server
 
+## Logging and Troubleshooting
+
+The server includes a comprehensive logging system to help diagnose issues:
+
+- The MCP server logs to `logs.txt` in the script directory
+- The speech.sh script logs to `speech_logs.txt` in the same directory
+- Individual speech request outputs are captured in `speech_[request_id].log` files
+- All logs include timestamps and component identifiers for easy tracking
+- Log files are automatically rotated when they exceed 1MB in size
+
+This dual-layer logging system provides detailed information about:
+- MCP server interactions and requests
+- Speech generation process and parameters
+- API calls to OpenAI with success/failure status
+- Audio playback attempts and outcomes
+
+If audio is not playing correctly:
+1. Check the main `logs.txt` file for errors in the MCP layer
+2. Check `speech_logs.txt` for errors in the speech generation process
+3. Look for the specific request ID in the logs 
+4. Examine the corresponding `speech_[request_id].log` file for detailed output
+5. Verify that your audio system is working correctly
+
+Common issues:
+- API key problems: Check if there are authentication errors in the logs
+- Audio device issues: Ensure your system's audio is properly configured
+- Network problems: Look for timeout errors or connection issues
+- Multiple simultaneous requests: Be aware that if multiple speech requests are made at once, they will all play potentially overlapping each other
+
 ## Usage Examples
 
 ### From a terminal
