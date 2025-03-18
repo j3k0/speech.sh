@@ -9,6 +9,7 @@ set -euo pipefail
 # Script directory for log file path
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/speech_logs.txt"
+TEMP_DIR="$SCRIPT_DIR/temp_audio"
 
 # Default configuration
 SPEED="1.0"
@@ -19,7 +20,7 @@ VERBOSE="F"
 MODEL="tts-1"  # Make model configurable
 MAX_RETRIES="3"  # Maximum number of retry attempts for API calls
 TIMEOUT="30"     # Timeout in seconds for API calls
-PLAYER="auto"    # Audio player to use: auto, ffmpeg, or mplayer
+PLAYER="auto"    # Audio player to use: auto, ffmpeg, mplayer, or vlc
 
 # Initialize or rotate log file if it gets too large (>1MB)
 if [[ -f "$LOG_FILE" && $(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null) -gt 1048576 ]]; then
@@ -30,6 +31,9 @@ fi
 
 # Create log file if it doesn't exist
 touch "$LOG_FILE"
+
+# Ensure temp directory exists
+mkdir -p "$TEMP_DIR"
 
 # Function to log messages to the log file with timestamp
 function log_to_file() {
@@ -75,14 +79,34 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Clean up old audio files (older than 24 hours)
+cleanup_old_files() {
+    log_to_file "CLEANUP" "Checking for audio files older than 24 hours"
+    if [[ -d "$TEMP_DIR" ]]; then
+        local count=0
+        # Find files older than 24 hours and delete them
+        while IFS= read -r old_file; do
+            rm -f "$old_file"
+            count=$((count + 1))
+            log_to_file "CLEANUP" "Removed old file: $old_file"
+        done < <(find "$TEMP_DIR" -name "*.mp3" -type f -mtime +1 2>/dev/null)
+        
+        if [[ $count -gt 0 ]]; then
+            log "Cleaned up $count old audio files"
+            log_to_file "CLEANUP" "Removed $count old audio files"
+        else
+            log_to_file "CLEANUP" "No old files to clean up"
+        fi
+    fi
+}
+
 # Detect if being called by MCP and adjust settings if needed
 if [[ -n "${MCP_CALLING:-}" ]] || [[ "$0" == *"mcp"* ]] || [[ "$(ps -p $PPID -o comm=)" == *"mcp"* ]]; then
     log_to_file "SYSTEM" "Detected running under MCP, adjusting settings"
     # Increase timeout and retries for better reliability when called by MCP
     TIMEOUT="60"
     MAX_RETRIES="3"
-    # Use more reliable audio player under MCP
-    PLAYER="ffmpeg"
+    PLAYER="vlc"
     # Force output to a predictable location if not specified
     if [[ "$FILE" == "AUTO" ]]; then
         FILE="/tmp/openai_speech_mcp_output.mp3"
@@ -109,8 +133,8 @@ Options:
   -V, --verbose       Same as --verbose
   -r, --retries N     Number of retry attempts for API calls (default: 3)
   -T, --timeout N     Timeout in seconds for API calls (default: 30)
-  -p, --player PLAYER Audio player to use: auto, ffmpeg, or mplayer (default: auto)
-                      'auto' will use ffmpeg if available, falling back to mplayer
+  -p, --player PLAYER Audio player to use: auto, ffmpeg, mplayer, or vlc (default: auto)
+                      'auto' will use ffmpeg if available, falling back to mplayer, then vlc
 
 The API key can be provided in three ways (in order of precedence):
 1. Command-line argument (-a, --api_key)
@@ -147,9 +171,13 @@ check_dependencies() {
             log "mplayer found, using it for audio playback"
             log_to_file "SYSTEM" "Found mplayer, setting as audio player"
             PLAYER="mplayer"
+        elif command_exists "vlc"; then
+            log "vlc found, using it for audio playback"
+            log_to_file "SYSTEM" "Found vlc, setting as audio player"
+            PLAYER="vlc"
         else
-            log_err "No audio player found. Please install ffmpeg or mplayer."
-            log_to_file "ERROR" "No audio player found (tried ffmpeg and mplayer)"
+            log_err "No audio player found. Please install ffmpeg, mplayer, or vlc."
+            log_to_file "ERROR" "No audio player found (tried ffmpeg, mplayer, and vlc)"
             missing=1
         fi
     elif [[ "$PLAYER" == "ffmpeg" ]]; then
@@ -170,8 +198,17 @@ check_dependencies() {
         else
             log_to_file "SYSTEM" "Found requested audio player: mplayer"
         fi
+    elif [[ "$PLAYER" == "vlc" ]]; then
+        log_to_file "SYSTEM" "Checking for vlc (explicit configuration)"
+        if ! command_exists "vlc"; then
+            log_err "vlc was specified but not found"
+            log_to_file "ERROR" "vlc was explicitly requested but not found"
+            missing=1
+        else
+            log_to_file "SYSTEM" "Found requested audio player: vlc"
+        fi
     else
-        log_err "Invalid player specified: $PLAYER. Valid options are: auto, ffmpeg, mplayer"
+        log_err "Invalid player specified: $PLAYER. Valid options are: auto, ffmpeg, mplayer, vlc"
         log_to_file "ERROR" "Invalid player specified: $PLAYER"
         missing=1
     fi
@@ -288,8 +325,8 @@ parse_arguments() {
     fi
     
     # Validate PLAYER value
-    if [[ ! "$PLAYER" =~ ^(auto|ffmpeg|mplayer)$ ]]; then
-        error_exit "Invalid player: $PLAYER. Valid values are: auto, ffmpeg, mplayer"
+    if [[ ! "$PLAYER" =~ ^(auto|ffmpeg|mplayer|vlc)$ ]]; then
+        error_exit "Invalid player: $PLAYER. Valid values are: auto, ffmpeg, mplayer, vlc"
     fi
     
     log_to_file "ARGS" "Argument parsing completed successfully"
@@ -352,14 +389,15 @@ get_api_key() {
 generate_filename() {
     log_to_file "FILE" "Generating output filename"
     if [[ "$FILE" == "AUTO" ]]; then
-        local temp_dir
-        temp_dir="$(dirname "$(mktemp -u)")"
-        # Use more secure hash function if available
+        # Get timestamp for filename
+        local timestamp=$(date "+%Y%m%d-%H%M%S")
+        
+        # Use the project's temp directory
         if command_exists "sha256sum"; then
-            FILE="${temp_dir}/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | sha256sum | cut -d" " -f1).mp3"
+            FILE="${TEMP_DIR}/speech_${timestamp}_$(echo -n "$TEXT $VOICE $SPEED" | sha256sum | cut -d" " -f1 | cut -c1-8).mp3"
             log_to_file "FILE" "Using sha256sum for filename generation"
         else
-            FILE="${temp_dir}/OPENAI_SPEECH_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1).mp3"
+            FILE="${TEMP_DIR}/speech_${timestamp}_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1 | cut -c1-8).mp3"
             log_to_file "FILE" "Using md5sum for filename generation"
         fi
         log "Auto-generated filename: $FILE"
@@ -509,6 +547,18 @@ play_audio() {
         else
             log_to_file "AUDIO" "Audio playback completed successfully with mplayer"
         fi
+    elif [[ "$PLAYER" == "vlc" ]]; then
+        log_to_file "AUDIO" "Using vlc to add file to queue"
+        # --playlist-enqueue: add to playlist without replacing current items
+        # --no-video: don't show video window
+        open "$FILE" -a /Applications/VLC.app
+        local exit_code=$?
+        if [[ $exit_code -ne 0 ]]; then
+            log_to_file "ERROR" "Failed to queue audio with vlc, exit code: $exit_code"
+            error_exit "Failed to add audio file to VLC queue" 6
+        else
+            log_to_file "AUDIO" "Audio file successfully added to VLC queue"
+        fi
     else
         log_to_file "ERROR" "Unknown player: $PLAYER"
         error_exit "Unknown player: $PLAYER"
@@ -518,6 +568,7 @@ play_audio() {
 # Main function
 main() {
     log_to_file "SYSTEM" "Starting speech.sh execution"
+    cleanup_old_files
     check_dependencies
     parse_arguments "$@"
     get_api_key
