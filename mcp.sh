@@ -69,9 +69,14 @@ function get_server_capabilities() {
                             "type": "string",
                             "description": "The text to convert to speech",
                             "required": true
+                        },
+                        "voice": {
+                            "type": "string",
+                            "description": "The voice to use for the speech",
+                            "required": false
                         }
                     },
-                    "notes": "Other settings (voice, speed, model) should be configured via environment variables: SPEECH_VOICE, SPEECH_SPEED, and SPEECH_MODEL"
+                    "notes": "Other settings (speed, model) should be configured via environment variables: SPEECH_SPEED, and SPEECH_MODEL"
                 }
             }
         }'
