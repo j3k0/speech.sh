@@ -13,11 +13,12 @@ TEMP_DIR="$SCRIPT_DIR/temp_audio"
 
 # Default configuration
 SPEED="1.0"
-VOICE="onyx"
+VOICE="troy"
 API_KEY="NONE"
 FILE="AUTO"
 VERBOSE="F"
-MODEL="tts-1"  # Make model configurable
+MODEL="canopylabs/orpheus-v1-english"  # Make model configurable
+API_BASE_URL="https://api.groq.com/openai/v1/audio/speech"  # TTS API endpoint
 MAX_RETRIES="3"  # Maximum number of retry attempts for API calls
 TIMEOUT="30"     # Timeout in seconds for API calls
 PLAYER="auto"    # Audio player to use: auto, ffmpeg, mplayer, or vlc
@@ -89,7 +90,7 @@ cleanup_old_files() {
             rm -f "$old_file"
             count=$((count + 1))
             log_to_file "CLEANUP" "Removed old file: $old_file"
-        done < <(find "$TEMP_DIR" -name "*.mp3" -type f -mtime +1 2>/dev/null)
+        done < <(find "$TEMP_DIR" -name "*.wav" -type f -mtime +1 2>/dev/null)
         
         if [[ $count -gt 0 ]]; then
             log "Cleaned up $count old audio files"
@@ -109,7 +110,7 @@ if [[ -n "${MCP_CALLING:-}" ]] || [[ "$0" == *"mcp"* ]] || [[ "$(ps -p $PPID -o 
     PLAYER="vlc"
     # Force output to a predictable location if not specified
     if [[ "$FILE" == "AUTO" ]]; then
-        FILE="/tmp/openai_speech_mcp_output.mp3"
+        FILE="/tmp/openai_speech_mcp_output.wav"
         log_to_file "FILE" "Force output file to $FILE for MCP"
     fi
 fi
@@ -124,11 +125,11 @@ Convert text to speech using OpenAI's API.
 Options:
   -h, --help          Show this help message and exit
   -t, --text TEXT     Text to convert to speech (required)
-  -v, --voice VOICE   Voice model to use (default: onyx)
+  -v, --voice VOICE   Voice model to use (default: troy)
   -s, --speed SPEED   Speech speed (default: 1.0)
   -o, --output FILE   Output file path (default: auto-generated)
-  -a, --api_key KEY   OpenAI API key
-  -m, --model MODEL   TTS model to use (default: tts-1)
+  -a, --api_key KEY   API key (Groq or OpenAI-compatible)
+  -m, --model MODEL   TTS model to use (default: canopylabs/orpheus-v1-english)
       --verbose       Enable verbose logging
   -V, --verbose       Same as --verbose
   -r, --retries N     Number of retry attempts for API calls (default: 3)
@@ -394,10 +395,10 @@ generate_filename() {
         
         # Use the project's temp directory
         if command_exists "sha256sum"; then
-            FILE="${TEMP_DIR}/speech_${timestamp}_$(echo -n "$TEXT $VOICE $SPEED" | sha256sum | cut -d" " -f1 | cut -c1-8).mp3"
+            FILE="${TEMP_DIR}/speech_${timestamp}_$(echo -n "$TEXT $VOICE $SPEED" | sha256sum | cut -d" " -f1 | cut -c1-8).wav"
             log_to_file "FILE" "Using sha256sum for filename generation"
         else
-            FILE="${TEMP_DIR}/speech_${timestamp}_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1 | cut -c1-8).mp3"
+            FILE="${TEMP_DIR}/speech_${timestamp}_$(echo -n "$TEXT $VOICE $SPEED" | md5sum - | cut -d" " -f1 | cut -c1-8).wav"
             log_to_file "FILE" "Using md5sum for filename generation"
         fi
         log "Auto-generated filename: $FILE"
@@ -426,8 +427,8 @@ generate_speech() {
             --arg model "$MODEL" \
             --arg input "$TEXT" \
             --arg voice "$VOICE" \
-            --arg speed "$SPEED" \
-            '{model: $model, input: $input, voice: $voice, speed: $speed}')
+            --argjson speed "$SPEED" \
+            '{model: $model, input: $input, voice: $voice, speed: $speed, response_format: "wav"}')
         
         log_to_file "API" "Created JSON payload with model: $MODEL, voice: $VOICE, speed: $SPEED"
         
@@ -447,11 +448,11 @@ generate_speech() {
             fi
             
             # Simple curl command - no complex options
-            log_to_file "API" "Making API request to OpenAI (attempt $retry_count)"
+            log_to_file "API" "Making API request to $API_BASE_URL (attempt $retry_count)"
             local response
             response=$(curl --silent --show-error \
                 --max-time "$TIMEOUT" \
-                https://api.openai.com/v1/audio/speech \
+                "$API_BASE_URL" \
                 -H "Content-Type: application/json" \
                 -H "Authorization: Bearer $API_KEY" \
                 -d "$json_payload" \

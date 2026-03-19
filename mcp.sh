@@ -63,7 +63,7 @@ function get_server_capabilities() {
             "authType": $auth_type,
             "methods": {
                 "speak": {
-                    "description": "Say something out loud. Use it to attract the user's attention when you're done with a task, need help, or just want to say something.",
+                    "description": "Say something out loud. Use it to attract the user's attention when you're done with a task, need help, or just want to say something. Keep it short unless requested otherwise.",
                     "parameters": {
                         "text": {
                             "type": "string",
@@ -73,10 +73,9 @@ function get_server_capabilities() {
                         "voice": {
                             "type": "string",
                             "description": "The voice to use for the speech",
-                            "required": false
+                            "required": true
                         }
-                    },
-                    "notes": "Other settings (speed, model) should be configured via environment variables: SPEECH_SPEED, and SPEECH_MODEL"
+                    }
                 }
             }
         }'
@@ -152,9 +151,9 @@ function handle_speak() {
     local params="$2"
     
     # Get defaults from environment variables or use hardcoded defaults
-    local default_voice="${SPEECH_VOICE:-onyx}"
+    local default_voice="${SPEECH_VOICE:-troy}"
     local default_speed="${SPEECH_SPEED:-1.0}"
-    local default_model="${SPEECH_MODEL:-tts-1}"
+    local default_model="${SPEECH_MODEL:-canopylabs/orpheus-v1-english}"
     
     # Extract parameters using jq, with fallbacks to environment variables
     local text=$(echo "$params" | jq -r '.text // ""')
