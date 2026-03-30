@@ -12,6 +12,10 @@ A text-to-speech CLI and MCP server using the Groq TTS API (OpenAI-compatible).
 - Audio playback via ffplay, mplayer, or VLC
 - MCP server for integration with AI assistants (Claude Desktop, Claude Code)
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/j3k0-speech-sh).
+
 ## Quick Start
 
 ```bash
